@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="theme-color" content="#0a0a0f">
+<link rel="manifest" href="/manifest.json">
+<title>MeetingMeter — Real-Time Meeting Cost Clock</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#0a0a0f;--card:#141420;--accent:#ff4757;--green:#2ed573;--gold:#ffa502;
+  --text:#f0f0f0;--dim:#707080;--radius:16px}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--text);
+  min-height:100dvh;display:flex;justify-content:center;align-items:center;overflow-x:hidden}
+.app{width:100%;max-width:440px;min-height:100dvh;position:relative}
+.screen{display:none;flex-direction:column;align-items:center;padding:24px 20px;min-height:100dvh}
+.screen.active{display:flex}
+
+/* Header */
+.header{text-align:center;margin:8px 0 24px}
+.header h1{font-size:1.6rem;font-weight:800;background:linear-gradient(135deg,var(--accent),#ff6b81);
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.header p{color:var(--dim);font-size:0.85rem;margin-top:4px}
+
+/* Setup */
+.attendees{width:100%;max-width:380px}
+.attendee-row{display:flex;align-items:center;gap:10px;padding:12px;margin-bottom:8px;
+  background:var(--card);border-radius:var(--radius);animation:slideIn 0.3s ease}
+@keyframes slideIn{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:translateY(0)}}
+.attendee-avatar{font-size:1.8rem;min-width:40px;text-align:center}
+.attendee-info{flex:1}
+.attendee-name{font-weight:600;font-size:0.9rem}
+.attendee-rate{font-size:0.75rem;color:var(--dim)}
+.attendee-rate input{background:var(--bg);border:1px solid #333;color:var(--text);padding:4px 8px;
+  border-radius:8px;width:80px;font-size:0.8rem;margin-left:4px}
+.attendee-rate input:focus{outline:none;border-color:var(--accent)}
+.btn-remove{background:none;border:none;color:var(--accent);font-size:1.2rem;cursor:pointer;padding:4px}
+
+.btn{background:var(--accent);color:#fff;border:none;padding:12px 24px;border-radius:50px;
+  font-size:0.9rem;font-weight:700;cursor:pointer;width:100%;max-width:380px;transition:transform 0.15s}
+.btn:active{transform:scale(0.96)}
+.btn-secondary{background:var(--card);color:var(--text)}
+.btn-small{padding:8px 16px;font-size:0.8rem;width:auto}
+
+.presets{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px;justify-content:center}
+.preset-chip{background:var(--card);border:2px solid transparent;color:var(--text);
+  padding:8px 14px;border-radius:50px;font-size:0.8rem;cursor:pointer;font-weight:600;
+  transition:all 0.15s}
+.preset-chip:active{transform:scale(0.95)}
+.preset-chip:hover{border-color:var(--accent)}
+
+/* Timer Screen */
+.timer-hero{text-align:center;margin:20px 0}
+.cost-display{font-size:4rem;font-weight:900;font-family:'SF Mono','Fira Code',monospace;
+  color:var(--accent);line-height:1;transition:color 0.5s}
+.cost-display.warning{color:var(--gold)}
+.cost-display.danger{color:var(--accent);animation:pulse-cost 1s infinite}
+@keyframes pulse-cost{0%,100%{opacity:1}50%{opacity:0.7}}
+.cost-label{color:var(--dim);font-size:0.85rem;margin-top:4px}
+.per-minute{color:var(--dim);font-size:0.8rem;margin-top:8px}
+.timer-elapsed{font-size:1.2rem;font-weight:600;margin-top:4px;color:var(--text)}
+
+.attendee-list{width:100%;max-width:380px;margin:16px 0}
+.attendee-mini{display:flex;justify-content:space-between;align-items:center;
+  padding:8px 12px;background:var(--card);border-radius:10px;margin-bottom:6px;font-size:0.85rem}
+.attendee-mini .cost{color:var(--accent);font-weight:600;font-family:'SF Mono',monospace}
+
+.btn-stop{background:var(--accent);color:#fff;border:none;padding:16px 48px;border-radius:50px;
+  font-size:1.2rem;font-weight:800;cursor:pointer;margin:20px 0;letter-spacing:1px;
+  box-shadow:0 0 30px rgba(255,71,87,0.3);animation:breathe 2s infinite}
+@keyframes breathe{0%,100%{box-shadow:0 0 20px rgba(255,71,87,0.3)}50%{box-shadow:0 0 40px rgba(255,71,87,0.6)}}
+.btn-stop:active{transform:scale(0.95)}
+
+/* Results */
+.result-card{background:var(--card);border-radius:var(--radius);padding:24px;width:100%;
+  max-width:380px;text-align:center;position:relative;overflow:hidden}
+.result-card::before{content:'';position:absolute;top:0;left:0;right:0;height:4px;
+  background:linear-gradient(90deg,var(--accent),var(--gold),var(--accent))}
+.result-total{font-size:3rem;font-weight:900;color:var(--accent);margin:12px 0}
+.result-meta{color:var(--dim);font-size:0.85rem;margin-bottom:16px}
+.result-emoji{font-size:1.5rem;margin:8px 0}
+.result-breakdown{text-align:left;margin:16px 0}
+.result-breakdown .attendee-mini{background:var(--bg)}
+
+.share-text{background:var(--bg);border:1px solid #333;border-radius:12px;padding:16px;
+  font-size:0.9rem;color:var(--text);margin:16px 0;white-space:pre-wrap;text-align:left;
+  line-height:1.6;font-family:'SF Mono',monospace;max-height:200px;overflow-y:auto}
+
+.btn-copy{animation:pulse-btn 2s infinite}
+@keyframes pulse-btn{0%,100%{opacity:1}50%{opacity:0.85}}
+
+/* History */
+.history-list{width:100%;max-width:380px}
+.history-item{background:var(--card);border-radius:var(--radius);padding:14px;
+  margin-bottom:8px;cursor:pointer}
+.history-item .date{color:var(--dim);font-size:0.75rem}
+.history-item .cost{color:var(--accent);font-weight:700;font-size:1.2rem}
+.history-item .detail{color:var(--dim);font-size:0.8rem;margin-top:4px}
+
+/* Error */
+.error-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.9);display:flex;
+  align-items:center;justify-content:center;z-index:9999}
+.error-dialog{background:var(--card);border-radius:24px;padding:32px;text-align:center;max-width:320px}
+
+/* Toast */
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--card);
+  color:var(--text);padding:10px 24px;border-radius:50px;font-size:0.85rem;
+  z-index:999;animation:toastIn 0.3s ease,toastOut 0.3s ease 2s forwards}
+@keyframes toastIn{from{opacity:0;transform:translateX(-50%) translateY(20px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
+@keyframes toastOut{from{opacity:1}to{opacity:0}}
+
+.pro-badge{position:absolute;top:8px;right:8px;background:var(--gold);color:#000;
+  font-size:0.65rem;font-weight:800;padding:3px 8px;border-radius:50px}
+</style>
+</head>
+<body>
+<div class="app" id="app"></div>
+
+<script>
+// ═══════════════════════════════════════════
+//  MEETING METER — Real-Time Cost Clock
+// ═══════════════════════════════════════════
+
+// Error boundary
+window.addEventListener('error',()=>{
+  document.getElementById('app').innerHTML=`<div class="error-overlay"><div class="error-dialog">
+    <h2>⚠️ Oops!</h2><p>Something went wrong.</p>
+    <button class="btn btn-small" onclick="init()" style="margin-top:16px">🔄 Reload</button></div></div>`;
+});
+
+// Preset roles
+const ROLES=[
+  {emoji:'👔',name:'CEO / VP',rate:200},
+  {emoji:'💻',name:'Engineer / Dev',rate:100},
+  {emoji:'🎨',name:'Designer',rate:85},
+  {emoji:'📊',name:'PM / Manager',rate:110},
+  {emoji:'💰',name:'Sales',rate:95},
+  {emoji:'📝',name:'Intern / Jr',rate:35},
+];
+
+// State
+const S={screen:'setup',attendees:[],startTime:null,elapsed:0,totalCost:0,
+  isPro:load('pro',false),history:load('history',[]),ticker:null};
+
+function load(k,d){try{return JSON.parse(localStorage.getItem('mm_'+k))}catch(e){return d}}
+function save(k,v){localStorage.setItem('mm_'+k,JSON.stringify(v))}
+function toast(m){let t=document.querySelector('.toast');if(t)t.remove();
+  t=document.createElement('div');t.className='toast';t.textContent=m;
+  document.body.appendChild(t);setTimeout(()=>t.remove(),2500)}
+
+// Render
+function render(){
+  const el=document.getElementById('app');
+  if(S.screen==='setup') el.innerHTML=renderSetup();
+  else if(S.screen==='timer') el.innerHTML=renderTimer();
+  else if(S.screen==='results') el.innerHTML=renderResults();
+  else if(S.screen==='history') el.innerHTML=renderHistory();
+}
+
+// ── Setup ───────────────────────────────
+function renderSetup(){
+  let attHTML='';
+  S.attendees.forEach((a,i)=>{
+    attHTML+=`<div class="attendee-row">
+      <div class="attendee-avatar">${a.emoji}</div>
+      <div class="attendee-info">
+        <div class="attendee-name">${a.name}</div>
+        <div class="attendee-rate">$<input type="number" value="${a.rate}" min="1" max="5000"
+          onchange="updateRate(${i},this.value)" onfocus="this.select()">/hr</div>
+      </div>
+      <button class="btn-remove" onclick="removeAttendee(${i})">✕</button></div>`;
+  });
+
+  const maxAtt=S.isPro?20:5;
+  const canAdd=S.attendees.length<maxAtt;
+  const proGate=!S.isPro&&S.attendees.length>=5;
+
+  return `<div class="screen active">
+    <div class="header"><h1>⏱️ MeetingMeter</h1><p>What's this meeting actually costing?</p></div>
+    ${S.isPro?'<div class="pro-badge">PRO</div>':''}
+    <div class="presets">
+      ${ROLES.map(r=>`<button class="preset-chip" onclick="addAttendee('${r.emoji}','${r.name}',${r.rate})">${r.emoji} ${r.name} $${r.rate}/hr</button>`).join('')}
+      <button class="preset-chip" style="border-style:dashed" onclick="addAttendee('👤','Custom',50)">+ Custom</button>
+    </div>
+    <div class="attendees" style="margin-bottom:12px">${attHTML||'<p style="color:var(--dim);text-align:center;padding:20px">Add attendees to get started ⬆</p>'}</div>
+    ${proGate?`<p style="color:var(--gold);font-size:0.8rem;text-align:center;margin-bottom:8px">🔒 Free: 5 max. <span onclick="goPro()" style="text-decoration:underline;cursor:pointer">Go Pro for unlimited</span></p>`:''}
+    <div style="display:flex;gap:8px;width:100%;max-width:380px">
+      ${canAdd?`<button class="btn btn-secondary btn-small" onclick="addAttendee('👤','Custom',50)">+ Add Person</button>`:''}
+    </div>
+    <button class="btn" onclick="startMeeting()" style="margin-top:16px" ${S.attendees.length===0?'disabled':''}>▶ Start Meeting</button>
+    ${S.history.length>0?`<button class="btn btn-secondary" onclick="S.screen='history';render()" style="margin-top:8px">📋 History (${S.history.length})</button>`:''}
+    ${!S.isPro?`<button class="btn btn-secondary" onclick="goPro()" style="margin-top:8px">⭐ Go Pro — $1.99</button>`:''}
+  </div>`;
+}
+
+function addAttendee(emoji,name,rate){
+  if(!S.isPro && S.attendees.length>=5){toast('Pro required for 6+ attendees');return}
+  S.attendees.push({emoji,name,rate:parseInt(rate)||50});
+  render();
+}
+function removeAttendee(i){S.attendees.splice(i,1);render()}
+function updateRate(i,v){S.attendees[i].rate=Math.max(1,Math.min(5000,parseInt(v)||0));render()}
+
+function goPro(){
+  // Simulated purchase — in prod this hits GPay/IAP
+  S.isPro=true;save('pro',true);
+  toast('🎉 You\'re now Pro! Unlimited attendees unlocked.');
+  render();
+}
+
+// ── Timer ────────────────────────────────
+function startMeeting(){
+  S.startTime=Date.now();S.screen='timer';
+  updateTimer();
+  S.ticker=setInterval(updateTimer,200);
+  render();
+}
+
+function updateTimer(){
+  S.elapsed=(Date.now()-S.startTime)/1000;
+  const totalRate=S.attendees.reduce((s,a)=>s+a.rate,0);
+  S.totalCost=(totalRate/3600)*S.elapsed;
+  S.perMinute=totalRate/60;
+  if(S.screen==='timer'){
+    const cd=document.getElementById('cost-display');
+    const el=document.getElementById('timer-elapsed');
+    if(cd) cd.textContent='$'+S.totalCost.toFixed(2);
+    if(el) el.textContent=formatTime(S.elapsed);
+    // Update per-attendee costs
+    S.attendees.forEach((a,i)=>{
+      const ac=document.getElementById('ac-'+i);
+      if(ac) ac.textContent='$'+((a.rate/3600)*S.elapsed).toFixed(2);
+    });
+    // Danger zone animation
+    if(cd&&S.totalCost>500) cd.className='cost-display danger';
+    else if(cd&&S.totalCost>200) cd.className='cost-display warning';
+  }
+}
+
+function stopMeeting(){
+  clearInterval(S.ticker);S.ticker=null;S.screen='results';
+  const entry={date:new Date().toISOString(),attendees:[...S.attendees],
+    elapsed:S.elapsed,totalCost:S.totalCost,perMinute:S.perMinute};
+  S.history.unshift(entry);if(S.history.length>20) S.history.pop();
+  save('history',S.history);
+  render();
+}
+
+function formatTime(s){
+  const h=Math.floor(s/3600),m=Math.floor((s%3600)/60),sec=Math.floor(s%60);
+  return `${h>0?h+'h ':''}${m}m ${sec}s`;
+}
+
+function renderTimer(){
+  const totalRate=S.attendees.reduce((s,a)=>s+a.rate,0);
+  return `<div class="screen active">
+    <div class="header"><h1>⏱️ Meeting In Progress</h1></div>
+    <div class="timer-hero">
+      <div class="cost-display" id="cost-display">$0.00</div>
+      <div class="cost-label">total cost · $${totalRate}/hr for ${S.attendees.length} people</div>
+      <div class="timer-elapsed" id="timer-elapsed">0s</div>
+      <div class="per-minute">$${S.perMinute.toFixed(2)} / minute</div>
+    </div>
+    <div class="attendee-list">
+      ${S.attendees.map((a,i)=>`<div class="attendee-mini">
+        <span>${a.emoji} ${a.name} · $${a.rate}/hr</span>
+        <span class="cost" id="ac-${i}">$0.00</span></div>`).join('')}
+    </div>
+    <button class="btn-stop" onclick="stopMeeting()">⏹ STOP MEETING</button>
+    <button class="btn btn-secondary" onclick="cancelMeeting()" style="margin-top:8px">↩ Back</button>
+  </div>`;
+}
+
+function cancelMeeting(){
+  clearInterval(S.ticker);S.ticker=null;
+  S.screen='setup';render();
+}
+
+// ── Results ──────────────────────────────
+function renderResults(){
+  const t=S.totalCost,el=S.elapsed,pm=S.perMinute;
+  let emoji=t>1000?'🫠 '+t>500?'😱 ':'💸 ':'🤔 ';
+  const shareMsg=`🫠 This meeting just cost $${t.toFixed(2)}
+
+⏱ ${formatTime(el)} · $${pm.toFixed(2)}/min · ${S.attendees.length} people
+
+${S.attendees.map(a=>`${a.emoji} ${a.name}: $${((a.rate/3600)*el).toFixed(2)}`).join('\n')}
+
+Made with MeetingMeter ⏱️`;
+
+  return `<div class="screen active">
+    <div class="results-emoji">${emoji}</div>
+    <div class="result-card">
+      <div class="result-total">$${t.toFixed(2)}</div>
+      <div class="result-meta">${formatTime(el)} · $${pm.toFixed(2)}/min · ${S.attendees.length} people</div>
+      <div class="result-breakdown">
+        ${S.attendees.map(a=>`<div class="attendee-mini">
+          <span>${a.emoji} ${a.name} · $${a.rate}/hr</span>
+          <span class="cost">$${((a.rate/3600)*el).toFixed(2)}</span></div>`).join('')}
+      </div>
+    </div>
+    <div class="share-text" id="share-text">${shareMsg}</div>
+    <button class="btn btn-copy" onclick="copyShare()" style="max-width:380px">📋 Copy & Share</button>
+    <button class="btn btn-secondary" onclick="S.attendees=[];S.screen='setup';render()" style="max-width:380px;margin-top:8px">🔄 New Meeting</button>
+    <button class="btn btn-secondary" onclick="S.screen='history';render()" style="max-width:380px;margin-top:4px">📋 History</button>
+  </div>`;
+}
+
+async function copyShare(){
+  const text=document.getElementById('share-text').textContent;
+  try{await navigator.clipboard.writeText(text);toast('📋 Copied! Share on Slack/Twitter')}
+  catch(e){toast('Failed to copy')}
+}
+
+// ── History ──────────────────────────────
+function renderHistory(){
+  return `<div class="screen active">
+    <div class="header"><h1>📋 Meeting History</h1></div>
+    <div class="history-list">
+      ${S.history.length===0?'<p style="color:var(--dim);text-align:center;padding:40px">No meetings yet</p>':''}
+      ${S.history.map((h,i)=>`<div class="history-item" onclick="replayHistory(${i})">
+        <div class="date">${new Date(h.date).toLocaleDateString()} · ${new Date(h.date).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</div>
+        <div class="cost">$${h.totalCost.toFixed(2)}</div>
+        <div class="detail">${formatTime(h.elapsed)} · ${h.attendees.length} people · $${h.perMinute.toFixed(2)}/min</div>
+      </div>`).join('')}
+    </div>
+    <button class="btn btn-secondary" onclick="S.screen='setup';render()" style="margin-top:16px;max-width:380px">← Back to Setup</button>
+  </div>`;
+}
+
+function replayHistory(i){
+  const h=S.history[i];
+  S.attendees=h.attendees;S.elapsed=h.elapsed;S.totalCost=h.totalCost;
+  S.perMinute=h.perMinute;S.screen='results';render();
+}
+
+// ── Init ─────────────────────────────────
+function init(){S.screen='setup';render()}
+init();
+</script>
+</body>
+</html>
