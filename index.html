@@ -6,6 +6,8 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
 <meta name="theme-color" content="#0a0a0f">
+<meta name="description" content="MeetingMeter — Real-time meeting cost calculator. Track what your meetings actually cost with live per-attendee cost tracking, shareable summaries, and meeting history.">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self';">
 <link rel="manifest" href="./manifest.json">
 <title>MeetingMeter — Real-Time Meeting Cost Clock</title>
 <style>
@@ -43,6 +45,8 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(
 .btn:active{transform:scale(0.96)}
 .btn-secondary{background:var(--card);color:var(--text)}
 .btn-small{padding:8px 16px;font-size:0.8rem;width:auto}
+.btn-inline{background:none;border:none;color:var(--gold);text-decoration:underline;cursor:pointer;
+  font-size:0.8rem;padding:0;font-family:inherit}
 
 .presets{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px;justify-content:center}
 .preset-chip{background:var(--card);border:2px solid transparent;color:var(--text);
@@ -95,6 +99,8 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(
 .history-list{width:100%;max-width:380px}
 .history-item{background:var(--card);border-radius:var(--radius);padding:14px;
   margin-bottom:8px;cursor:pointer}
+.history-item:hover{background:#1a1a2a}
+.history-item:focus{outline:2px solid var(--accent);outline-offset:2px}
 .history-item .date{color:var(--dim);font-size:0.75rem}
 .history-item .cost{color:var(--accent);font-weight:700;font-size:1.2rem}
 .history-item .detail{color:var(--dim);font-size:0.8rem;margin-top:4px}
@@ -123,15 +129,18 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(
 //  MEETING METER — Real-Time Cost Clock
 // ═══════════════════════════════════════════
 
+// Service Worker registration
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('./sw.js').catch(function(){});
+}
+
 // Error boundary
-window.addEventListener('error',()=>{
-  document.getElementById('app').innerHTML=`<div class="error-overlay"><div class="error-dialog">
-    <h2>⚠️ Oops!</h2><p>Something went wrong.</p>
-    <button class="btn btn-small" onclick="init()" style="margin-top:16px">🔄 Reload</button></div></div>`;
+window.addEventListener('error',function(){
+  document.getElementById('app').innerHTML='<div class="error-overlay"><div class="error-dialog">\n    <h2>⚠️ Oops!</h2><p>Something went wrong.</p>\n    <button class="btn btn-small" data-action="reload" style="margin-top:16px">🔄 Reload</button></div></div>';
 });
 
 // Preset roles
-const ROLES=[
+var ROLES=[
   {emoji:'👔',name:'CEO / VP',rate:200},
   {emoji:'💻',name:'Engineer / Dev',rate:100},
   {emoji:'🎨',name:'Designer',rate:85},
@@ -141,18 +150,36 @@ const ROLES=[
 ];
 
 // State
-const S={screen:'setup',attendees:[],startTime:null,elapsed:0,totalCost:0,
+var S={screen:'setup',attendees:[],startTime:null,elapsed:0,totalCost:0,
   isPro:load('pro',false),history:load('history',[]),ticker:null};
 
 function load(k,d){try{return JSON.parse(localStorage.getItem('mm_'+k))}catch(e){return d}}
-function save(k,v){localStorage.setItem('mm_'+k,JSON.stringify(v))}
-function toast(m){let t=document.querySelector('.toast');if(t)t.remove();
-  t=document.createElement('div');t.className='toast';t.textContent=m;
-  document.body.appendChild(t);setTimeout(()=>t.remove(),2500)}
+
+function save(k,v){
+  try {
+    localStorage.setItem('mm_'+k,JSON.stringify(v));
+  } catch(e) {
+    if (e.name==='QuotaExceededError' || (e instanceof DOMException && (e.code===22 || e.code===1014))) {
+      toast('⚠️ Storage full. Please clear some history.');
+    }
+  }
+}
+
+function toast(m){
+  var t=document.querySelector('.toast');
+  if(t)t.remove();
+  t=document.createElement('div');
+  t.className='toast';
+  t.setAttribute('role','status');
+  t.setAttribute('aria-live','polite');
+  t.textContent=m;
+  document.body.appendChild(t);
+  setTimeout(function(){t.remove()},2500);
+}
 
 // Render
 function render(){
-  const el=document.getElementById('app');
+  var el=document.getElementById('app');
   if(S.screen==='setup') el.innerHTML=renderSetup();
   else if(S.screen==='timer') el.innerHTML=renderTimer();
   else if(S.screen==='results') el.innerHTML=renderResults();
@@ -161,43 +188,21 @@ function render(){
 
 // ── Setup ───────────────────────────────
 function renderSetup(){
-  let attHTML='';
-  S.attendees.forEach((a,i)=>{
-    attHTML+=`<div class="attendee-row">
-      <div class="attendee-avatar">${a.emoji}</div>
-      <div class="attendee-info">
-        <div class="attendee-name">${a.name}</div>
-        <div class="attendee-rate">$<input type="number" value="${a.rate}" min="1" max="5000"
-          onchange="updateRate(${i},this.value)" onfocus="this.select()">/hr</div>
-      </div>
-      <button class="btn-remove" onclick="removeAttendee(${i})">✕</button></div>`;
+  var attHTML='';
+  S.attendees.forEach(function(a,i){
+    attHTML+='<div class="attendee-row">\n      <div class="attendee-avatar">'+a.emoji+'</div>\n      <div class="attendee-info">\n        <div class="attendee-name">'+a.name+'</div>\n        <div class="attendee-rate">$<input type="number" value="'+a.rate+'" min="1" max="5000"\n          data-action="update-rate" data-index="'+i+'" onfocus="this.select()" aria-label="'+a.name+'&apos;s hourly rate">/hr</div>\n      </div>\n      <button class="btn-remove" data-action="remove-attendee" data-index="'+i+'" aria-label="Remove '+a.name+'">✕</button></div>';
   });
 
-  const maxAtt=S.isPro?20:5;
-  const canAdd=S.attendees.length<maxAtt;
-  const proGate=!S.isPro&&S.attendees.length>=5;
+  var maxAtt=S.isPro?20:5;
+  var canAdd=S.attendees.length<maxAtt;
+  var proGate=!S.isPro&&S.attendees.length>=5;
 
-  return `<div class="screen active">
-    <div class="header"><h1>⏱️ MeetingMeter</h1><p>What's this meeting actually costing?</p></div>
-    ${S.isPro?'<div class="pro-badge">PRO</div>':''}
-    <div class="presets">
-      ${ROLES.map(r=>`<button class="preset-chip" onclick="addAttendee('${r.emoji}','${r.name}',${r.rate})">${r.emoji} ${r.name} $${r.rate}/hr</button>`).join('')}
-      <button class="preset-chip" style="border-style:dashed" onclick="addAttendee('👤','Custom',50)">+ Custom</button>
-    </div>
-    <div class="attendees" style="margin-bottom:12px">${attHTML||'<p style="color:var(--dim);text-align:center;padding:20px">Add attendees to get started ⬆</p>'}</div>
-    ${proGate?`<p style="color:var(--gold);font-size:0.8rem;text-align:center;margin-bottom:8px">🔒 Free: 5 max. <span onclick="goPro()" style="text-decoration:underline;cursor:pointer">Go Pro for unlimited</span></p>`:''}
-    <div style="display:flex;gap:8px;width:100%;max-width:380px">
-      ${canAdd?`<button class="btn btn-secondary btn-small" onclick="addAttendee('👤','Custom',50)">+ Add Person</button>`:''}
-    </div>
-    <button class="btn" onclick="startMeeting()" style="margin-top:16px" ${S.attendees.length===0?'disabled':''}>▶ Start Meeting</button>
-    ${S.history.length>0?`<button class="btn btn-secondary" onclick="S.screen='history';render()" style="margin-top:8px">📋 History (${S.history.length})</button>`:''}
-    ${!S.isPro?`<button class="btn btn-secondary" onclick="goPro()" style="margin-top:8px">⭐ Go Pro — $1.99</button>`:''}
-  </div>`;
+  return '<div class="screen active">\n    <div class="header"><h1>⏱️ MeetingMeter</h1><p>What&apos;s this meeting actually costing?</p></div>\n    '+(S.isPro?'<div class="pro-badge" aria-label="Pro member">PRO</div>':'')+'\n    <div class="presets">\n      '+ROLES.map(function(r){return '<button class="preset-chip" role="button" data-action="add-attendee" data-emoji="'+r.emoji+'" data-name="'+r.name+'" data-rate="'+r.rate+'" aria-label="Add '+r.name+' at $'+r.rate+'/hr">'+r.emoji+' '+r.name+' $'+r.rate+'/hr</button>';}).join('')+'\n      <button class="preset-chip" style="border-style:dashed" role="button" data-action="add-attendee" data-emoji="👤" data-name="Custom" data-rate="50" aria-label="Add Custom at $50/hr">+ Custom</button>\n    </div>\n    <div class="attendees" style="margin-bottom:12px">'+(attHTML||'<p style="color:var(--dim);text-align:center;padding:20px">Add attendees to get started ⬆</p>')+'</div>\n    '+(proGate?'<p style="color:var(--gold);font-size:0.8rem;text-align:center;margin-bottom:8px">🔒 Free: 5 max. <button class="btn-inline" data-action="go-pro">Go Pro for unlimited</button></p>':'')+'\n    <div style="display:flex;gap:8px;width:100%;max-width:380px">\n      '+(canAdd?'<button class="btn btn-secondary btn-small" data-action="add-attendee" data-emoji="👤" data-name="Custom" data-rate="50">+ Add Person</button>':'')+'\n    </div>\n    <button class="btn" data-action="start-meeting" id="btn-start" style="margin-top:16px" '+(S.attendees.length===0?'disabled':'')+' aria-label="Start meeting with '+S.attendees.length+' attendees">▶ Start Meeting</button>\n    '+(S.history.length>0?'<button class="btn btn-secondary" data-action="nav-history" style="margin-top:8px">📋 History ('+S.history.length+')</button>':'')+'\n    '+(!S.isPro?'<button class="btn btn-secondary" data-action="go-pro" style="margin-top:8px">⭐ Go Pro — $1.99</button>':'')+'\n  </div>';
 }
 
 function addAttendee(emoji,name,rate){
   if(!S.isPro && S.attendees.length>=5){toast('Pro required for 6+ attendees');return}
-  S.attendees.push({emoji,name,rate:parseInt(rate)||50});
+  S.attendees.push({emoji:emoji,name:name,rate:parseInt(rate)||50});
   render();
 }
 function removeAttendee(i){S.attendees.splice(i,1);render()}
@@ -220,17 +225,17 @@ function startMeeting(){
 
 function updateTimer(){
   S.elapsed=(Date.now()-S.startTime)/1000;
-  const totalRate=S.attendees.reduce((s,a)=>s+a.rate,0);
+  var totalRate=S.attendees.reduce(function(s,a){return s+a.rate},0);
   S.totalCost=(totalRate/3600)*S.elapsed;
   S.perMinute=totalRate/60;
   if(S.screen==='timer'){
-    const cd=document.getElementById('cost-display');
-    const el=document.getElementById('timer-elapsed');
+    var cd=document.getElementById('cost-display');
+    var el=document.getElementById('timer-elapsed');
     if(cd) cd.textContent='$'+S.totalCost.toFixed(2);
     if(el) el.textContent=formatTime(S.elapsed);
     // Update per-attendee costs
-    S.attendees.forEach((a,i)=>{
-      const ac=document.getElementById('ac-'+i);
+    S.attendees.forEach(function(a,i){
+      var ac=document.getElementById('ac-'+i);
       if(ac) ac.textContent='$'+((a.rate/3600)*S.elapsed).toFixed(2);
     });
     // Danger zone animation
@@ -241,7 +246,7 @@ function updateTimer(){
 
 function stopMeeting(){
   clearInterval(S.ticker);S.ticker=null;S.screen='results';
-  const entry={date:new Date().toISOString(),attendees:[...S.attendees],
+  var entry={date:new Date().toISOString(),attendees:S.attendees.slice(),
     elapsed:S.elapsed,totalCost:S.totalCost,perMinute:S.perMinute};
   S.history.unshift(entry);if(S.history.length>20) S.history.pop();
   save('history',S.history);
@@ -249,28 +254,13 @@ function stopMeeting(){
 }
 
 function formatTime(s){
-  const h=Math.floor(s/3600),m=Math.floor((s%3600)/60),sec=Math.floor(s%60);
-  return `${h>0?h+'h ':''}${m}m ${sec}s`;
+  var h=Math.floor(s/3600),m=Math.floor((s%3600)/60),sec=Math.floor(s%60);
+  return (h>0?h+'h ':'')+m+'m '+sec+'s';
 }
 
 function renderTimer(){
-  const totalRate=S.attendees.reduce((s,a)=>s+a.rate,0);
-  return `<div class="screen active">
-    <div class="header"><h1>⏱️ Meeting In Progress</h1></div>
-    <div class="timer-hero">
-      <div class="cost-display" id="cost-display">$0.00</div>
-      <div class="cost-label">total cost · $${totalRate}/hr for ${S.attendees.length} people</div>
-      <div class="timer-elapsed" id="timer-elapsed">0s</div>
-      <div class="per-minute">$${S.perMinute.toFixed(2)} / minute</div>
-    </div>
-    <div class="attendee-list">
-      ${S.attendees.map((a,i)=>`<div class="attendee-mini">
-        <span>${a.emoji} ${a.name} · $${a.rate}/hr</span>
-        <span class="cost" id="ac-${i}">$0.00</span></div>`).join('')}
-    </div>
-    <button class="btn-stop" onclick="stopMeeting()">⏹ STOP MEETING</button>
-    <button class="btn btn-secondary" onclick="cancelMeeting()" style="margin-top:8px">↩ Back</button>
-  </div>`;
+  var totalRate=S.attendees.reduce(function(s,a){return s+a.rate},0);
+  return '<div class="screen active">\n    <div class="header"><h1>⏱️ Meeting In Progress</h1></div>\n    <div class="timer-hero">\n      <div class="cost-display" id="cost-display" role="timer" aria-live="polite" aria-label="Current meeting cost">$0.00</div>\n      <div class="cost-label">total cost · $'+totalRate+'/hr for '+S.attendees.length+' people</div>\n      <div class="timer-elapsed" id="timer-elapsed">0s</div>\n      <div class="per-minute">$'+S.perMinute.toFixed(2)+' / minute</div>\n    </div>\n    <div class="attendee-list" role="list">\n      '+S.attendees.map(function(a,i){return '<div class="attendee-mini" role="listitem">\n        <span>'+a.emoji+' '+a.name+' · $'+a.rate+'/hr</span>\n        <span class="cost" id="ac-'+i+'">$0.00</span></div>';}).join('')+'\n    </div>\n    <button class="btn-stop" data-action="stop-meeting" aria-label="Stop meeting and show results">⏹ STOP MEETING</button>\n    <button class="btn btn-secondary" data-action="cancel-meeting" style="margin-top:8px">↩ Back</button>\n  </div>';
 }
 
 function cancelMeeting(){
@@ -280,61 +270,106 @@ function cancelMeeting(){
 
 // ── Results ──────────────────────────────
 function renderResults(){
-  const t=S.totalCost,el=S.elapsed,pm=S.perMinute;
-  let emoji=t>1000?'🫠 '+t>500?'😱 ':'💸 ':'🤔 ';
-  const shareMsg=`🫠 This meeting just cost $${t.toFixed(2)}
+  var t=S.totalCost,el=S.elapsed,pm=S.perMinute;
+  var emoji=t>1000?'🫠 '+(t>500?'😱 ':'💸 '):'🤔 ';
+  var shareMsg='🫠 This meeting just cost $'+t.toFixed(2)+'\n\n⏱ '+formatTime(el)+' · $'+pm.toFixed(2)+'/min · '+S.attendees.length+' people\n\n'+S.attendees.map(function(a){return a.emoji+' '+a.name+': $'+((a.rate/3600)*el).toFixed(2);}).join('\n')+'\n\nMade with MeetingMeter ⏱️';
 
-⏱ ${formatTime(el)} · $${pm.toFixed(2)}/min · ${S.attendees.length} people
-
-${S.attendees.map(a=>`${a.emoji} ${a.name}: $${((a.rate/3600)*el).toFixed(2)}`).join('\n')}
-
-Made with MeetingMeter ⏱️`;
-
-  return `<div class="screen active">
-    <div class="results-emoji">${emoji}</div>
-    <div class="result-card">
-      <div class="result-total">$${t.toFixed(2)}</div>
-      <div class="result-meta">${formatTime(el)} · $${pm.toFixed(2)}/min · ${S.attendees.length} people</div>
-      <div class="result-breakdown">
-        ${S.attendees.map(a=>`<div class="attendee-mini">
-          <span>${a.emoji} ${a.name} · $${a.rate}/hr</span>
-          <span class="cost">$${((a.rate/3600)*el).toFixed(2)}</span></div>`).join('')}
-      </div>
-    </div>
-    <div class="share-text" id="share-text">${shareMsg}</div>
-    <button class="btn btn-copy" onclick="copyShare()" style="max-width:380px">📋 Copy & Share</button>
-    <button class="btn btn-secondary" onclick="S.attendees=[];S.screen='setup';render()" style="max-width:380px;margin-top:8px">🔄 New Meeting</button>
-    <button class="btn btn-secondary" onclick="S.screen='history';render()" style="max-width:380px;margin-top:4px">📋 History</button>
-  </div>`;
+  return '<div class="screen active">\n    <div class="results-emoji">'+emoji+'</div>\n    <div class="result-card">\n      <div class="result-total">$'+t.toFixed(2)+'</div>\n      <div class="result-meta">'+formatTime(el)+' · $'+pm.toFixed(2)+'/min · '+S.attendees.length+' people</div>\n      <div class="result-breakdown">\n        '+S.attendees.map(function(a){return '<div class="attendee-mini">\n          <span>'+a.emoji+' '+a.name+' · $'+a.rate+'/hr</span>\n          <span class="cost">$'+((a.rate/3600)*el).toFixed(2)+'</span></div>';}).join('')+'\n      </div>\n    </div>\n    <div class="share-text" id="share-text" role="textbox" aria-readonly="true" aria-label="Shareable meeting summary">'+shareMsg+'</div>\n    <button class="btn btn-copy" data-action="copy-share" style="max-width:380px">📋 Copy & Share</button>\n    <button class="btn btn-secondary" data-action="new-meeting" style="max-width:380px;margin-top:8px">🔄 New Meeting</button>\n    <button class="btn btn-secondary" data-action="nav-history" style="max-width:380px;margin-top:4px">📋 History</button>\n  </div>';
 }
 
-async function copyShare(){
-  const text=document.getElementById('share-text').textContent;
-  try{await navigator.clipboard.writeText(text);toast('📋 Copied! Share on Slack/Twitter')}
-  catch(e){toast('Failed to copy')}
+function copyShare(){
+  var text=document.getElementById('share-text').textContent;
+  if(navigator.clipboard){navigator.clipboard.writeText(text).then(function(){toast('📋 Copied! Share on Slack/Twitter')}).catch(function(){toast('Failed to copy')});}
+  else{toast('Failed to copy');}
 }
 
 // ── History ──────────────────────────────
 function renderHistory(){
-  return `<div class="screen active">
-    <div class="header"><h1>📋 Meeting History</h1></div>
-    <div class="history-list">
-      ${S.history.length===0?'<p style="color:var(--dim);text-align:center;padding:40px">No meetings yet</p>':''}
-      ${S.history.map((h,i)=>`<div class="history-item" onclick="replayHistory(${i})">
-        <div class="date">${new Date(h.date).toLocaleDateString()} · ${new Date(h.date).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</div>
-        <div class="cost">$${h.totalCost.toFixed(2)}</div>
-        <div class="detail">${formatTime(h.elapsed)} · ${h.attendees.length} people · $${h.perMinute.toFixed(2)}/min</div>
-      </div>`).join('')}
-    </div>
-    <button class="btn btn-secondary" onclick="S.screen='setup';render()" style="margin-top:16px;max-width:380px">← Back to Setup</button>
-  </div>`;
+  return '<div class="screen active">\n    <div class="header"><h1>📋 Meeting History</h1></div>\n    <div class="history-list">\n      '+(S.history.length===0?'<p style="color:var(--dim);text-align:center;padding:40px">No meetings yet</p>':'')+'\n      '+S.history.map(function(h,i){return '<div class="history-item" data-action="replay-history" data-index="'+i+'" role="button" tabindex="0" aria-label="Replay meeting from '+new Date(h.date).toLocaleDateString()+'">\n        <div class="date">'+new Date(h.date).toLocaleDateString()+' · '+new Date(h.date).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})+'</div>\n        <div class="cost">$'+h.totalCost.toFixed(2)+'</div>\n        <div class="detail">'+formatTime(h.elapsed)+' · '+h.attendees.length+' people · $'+h.perMinute.toFixed(2)+'/min</div>\n      </div>';}).join('')+'\n    </div>\n    <button class="btn btn-secondary" data-action="nav-setup" style="margin-top:16px;max-width:380px">← Back to Setup</button>\n  </div>';
 }
 
 function replayHistory(i){
-  const h=S.history[i];
+  var h=S.history[i];
   S.attendees=h.attendees;S.elapsed=h.elapsed;S.totalCost=h.totalCost;
   S.perMinute=h.perMinute;S.screen='results';render();
 }
+
+// ── Event Delegation ────────────────────
+(function(){
+  var app=document.getElementById('app');
+
+  // Click handler for all data-action elements
+  app.addEventListener('click',function(e){
+    var target=e.target.closest('[data-action]');
+    if(!target) return;
+    var action=target.dataset.action;
+
+    switch(action){
+      case 'add-attendee':
+        addAttendee(target.dataset.emoji,target.dataset.name,parseInt(target.dataset.rate)||50);
+        // Focus start button after adding attendee
+        setTimeout(function(){
+          var btn=document.getElementById('btn-start');
+          if(btn) btn.focus();
+        },50);
+        break;
+      case 'remove-attendee':
+        removeAttendee(parseInt(target.dataset.index));
+        break;
+      case 'start-meeting':
+        if(S.attendees.length>0) startMeeting();
+        break;
+      case 'stop-meeting':
+        stopMeeting();
+        break;
+      case 'cancel-meeting':
+        cancelMeeting();
+        break;
+      case 'go-pro':
+        goPro();
+        break;
+      case 'nav-setup':
+        S.screen='setup';render();
+        break;
+      case 'nav-history':
+        S.screen='history';render();
+        break;
+      case 'new-meeting':
+        S.attendees=[];S.screen='setup';render();
+        break;
+      case 'copy-share':
+        copyShare();
+        break;
+      case 'replay-history':
+        replayHistory(parseInt(target.dataset.index));
+        break;
+      case 'reload':
+        init();
+        break;
+    }
+  });
+
+  // Change handler for rate inputs
+  app.addEventListener('change',function(e){
+    if(e.target.dataset.action==='update-rate'){
+      updateRate(parseInt(e.target.dataset.index),e.target.value);
+    }
+  });
+
+  // Keyboard: Enter/Space activates non-button actionable elements
+  app.addEventListener('keydown',function(e){
+    if(e.key==='Enter' || e.key===' '){
+      var actionable=e.target.closest('[data-action]');
+      if(!actionable) return;
+      // Native buttons handle Enter/Space themselves
+      if(actionable.tagName==='BUTTON') return;
+      // Don't intercept in text inputs
+      if(e.target.tagName==='INPUT' || e.target.tagName==='TEXTAREA') return;
+      e.preventDefault();
+      actionable.click();
+    }
+  });
+})();
 
 // ── Init ─────────────────────────────────
 function init(){S.screen='setup';render()}
